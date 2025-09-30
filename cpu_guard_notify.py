@@ -7,18 +7,23 @@ import requests
 import shutil
 import sys
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ==== Konfigurasi ====
-THRESHOLD = 100
-DURATION = 30
-INTERVAL = 5
-LOG_FILE = "/var/log/cpu_guard.log"
+THRESHOLD = int(os.getenv('THRESHOLD', 100))
+DURATION = int(os.getenv('DURATION', 30))
+INTERVAL = int(os.getenv('INTERVAL', 5))
+LOG_FILE = os.getenv('LOG_FILE', "/var/log/cpu_guard.log")
 
 # WhatsApp API
-API_URL = "http://193.219.97.148:3003/api/sendText"
-RECIPIENT_NUMBER = "6281310307754"
+API_URL = os.getenv('API_URL')
+USERNAME = os.getenv('USERNAME')
+PASSWORD = os.getenv('PASSWORD')
+RECIPIENT_NUMBER = os.getenv('RECIPIENT_NUMBER')
 
-MALWARE_DIR = "/root/.x"
+MALWARE_DIR = os.getenv('MALWARE_DIR', "/root/.x")
 high_cpu_processes = {}
 
 # ==== Mode Debug ====
@@ -38,19 +43,18 @@ def send_whatsapp_message(message):
     log(f"DEBUG: Recipient: {RECIPIENT_NUMBER}")
     
     payload = {
-        "chatId": f"{RECIPIENT_NUMBER}@c.us",
-        "reply_to": None,
-        "text": message,
-        "linkPreview": True,
-        "linkPreviewHighQuality": False,
-        "session": "default"
+        "phone": f"{RECIPIENT_NUMBER}@s.whatsapp.net",
+        "message": message,
+        "reply_message_id": "",
+        "is_forwarded": False,
+        "duration": 3600
     }
     
     log(f"DEBUG: Payload: {payload}")
     
     try:
         # Test koneksi dengan timeout
-        response = requests.post(API_URL, json=payload, timeout=10)
+        response = requests.post(API_URL, json=payload, auth=(USERNAME, PASSWORD), timeout=10)
         log(f"DEBUG: Response status: {response.status_code}")
         log(f"DEBUG: Response headers: {dict(response.headers)}")
         log(f"DEBUG: Response body: {response.text}")
