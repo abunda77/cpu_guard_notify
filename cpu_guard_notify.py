@@ -19,7 +19,9 @@ LOG_FILE = os.getenv('LOG_FILE', "/var/log/cpu_guard.log")
 
 # WhatsApp API
 API_URL = os.getenv('API_URL')
-USERNAME = os.getenv('USERNAME')
+# Perbaikan: Gunakan API_KEY sesuai dengan .env.example, fallback ke USERNAME untuk kompatibilitas
+API_KEY = os.getenv('API_KEY', os.getenv('USERNAME'))
+USERNAME = os.getenv('USERNAME')  # Pertahankan untuk kompatibilitas
 PASSWORD = os.getenv('PASSWORD')
 RECIPIENT_NUMBER = os.getenv('RECIPIENT_NUMBER')
 
@@ -34,10 +36,31 @@ def log(msg):
     full_msg = timestamp + msg
     if DEBUG:
         print(full_msg)
-    with open(LOG_FILE, 'a') as f:
-        f.write(full_msg + "\n")
+    try:
+        # Pastikan direktori log ada
+        log_dir = os.path.dirname(LOG_FILE)
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        
+        with open(LOG_FILE, 'a') as f:
+            f.write(full_msg + "\n")
+    except Exception as e:
+        print(f"ERROR: Failed to write to log file: {e}")
 
 def send_whatsapp_message(message):
+    # Validasi variabel lingkungan
+    if not API_URL:
+        log("❌ WhatsApp API URL not configured")
+        return False
+    
+    if not API_KEY and not USERNAME:
+        log("❌ WhatsApp API credentials not configured")
+        return False
+        
+    if not RECIPIENT_NUMBER:
+        log("❌ WhatsApp recipient number not configured")
+        return False
+    
     log(f"DEBUG: Sending WhatsApp message: {message}")
     log(f"DEBUG: API URL: {API_URL}")
     log(f"DEBUG: Recipient: {RECIPIENT_NUMBER}")
@@ -53,8 +76,17 @@ def send_whatsapp_message(message):
     log(f"DEBUG: Payload: {payload}")
     
     try:
+        # Perbaikan: Gunakan API_KEY jika tersedia, fallback ke USERNAME/PASSWORD untuk kompatibilitas
+        auth = None
+        if API_KEY:
+            headers = {"Authorization": f"Bearer {API_KEY}"}
+            auth = None
+        else:
+            headers = {}
+            auth = (USERNAME, PASSWORD)
+            
         # Test koneksi dengan timeout
-        response = requests.post(API_URL, json=payload, auth=(USERNAME, PASSWORD), timeout=10)
+        response = requests.post(API_URL, json=payload, headers=headers, auth=auth, timeout=10)
         log(f"DEBUG: Response status: {response.status_code}")
         log(f"DEBUG: Response headers: {dict(response.headers)}")
         log(f"DEBUG: Response body: {response.text}")
@@ -95,15 +127,55 @@ def remove_malware_dir_if_exists():
     else:
         log(f"DEBUG: Malware directory not found: {MALWARE_DIR}")
 
+# ===== Validasi Konfigurasi =====
+def validate_configuration():
+    """Validasi semua konfigurasi yang diperlukan"""
+    errors = []
+    
+    if THRESHOLD <= 0 or THRESHOLD > 100:
+        errors.append(f"THRESHOLD harus antara 1-100, saat ini: {THRESHOLD}")
+    
+    if DURATION <= 0:
+        errors.append(f"DURATION harus lebih dari 0, saat ini: {DURATION}")
+    
+    if INTERVAL <= 0:
+        errors.append(f"INTERVAL harus lebih dari 0, saat ini: {INTERVAL}")
+    
+    if not API_URL:
+        errors.append("API_URL tidak dikonfigurasi")
+    
+    if not API_KEY and not USERNAME:
+        errors.append("API_KEY atau USERNAME tidak dikonfigurasi")
+    
+    if not RECIPIENT_NUMBER:
+        errors.append("RECIPIENT_NUMBER tidak dikonfigurasi")
+    
+    if errors:
+        for error in errors:
+            log(f"❌ Configuration error: {error}")
+        return False
+    
+    return True
+
 # ===== Main Loop =====
-log("🚀 CPU Guard started with debug mode")
+# Perbaikan: Pesan startup yang kondisional tergantung mode debug
+debug_mode_msg = "with debug mode" if DEBUG else "without debug mode"
+log(f"🚀 CPU Guard started {debug_mode_msg}")
 log(f"DEBUG: Configuration - THRESHOLD: {THRESHOLD}, DURATION: {DURATION}, INTERVAL: {INTERVAL}")
 log(f"DEBUG: Log file: {LOG_FILE}")
+
+# Validasi konfigurasi sebelum memulai
+if not validate_configuration():
+    log("❌ Configuration validation failed. Please check your .env file.")
+    sys.exit(1)
 
 # Test WhatsApp API saat startup
 log("DEBUG: Testing WhatsApp API connection...")
 test_message = "[CPU GUARD] System started successfully"
 send_whatsapp_message(test_message)
+
+# Inisialisasi psutil untuk pengukuran CPU yang akurat
+psutil.cpu_percent(interval=0.1)
 
 while True:
     log(f"DEBUG: Starting monitoring cycle...")
@@ -115,11 +187,19 @@ while True:
     log("DEBUG: Scanning processes...")
     active_processes = 0
     
-    for proc in psutil.process_iter(['pid', 'cpu_percent', 'name']):
+    # Perbaikan: Gunakan psutil.process_iter dengan parameter yang lebih lengkap
+    for proc in psutil.process_iter(['pid', 'name', 'cpu_percent']):
         try:
-            cpu = proc.info['cpu_percent']
-            pid = proc.info['pid']
-            name = proc.info['name']
+            # Dapatkan informasi proses
+            pinfo = proc.info
+            pid = pinfo['pid']
+            name = pinfo['name']
+            
+            # Perbaikan: Dapatkan persentase CPU dengan interval yang lebih akurat
+            try:
+                cpu = proc.cpu_percent(interval=0.1)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
             
             if cpu > 0:  # Hanya proses aktif
                 active_processes += 1
@@ -138,23 +218,35 @@ while True:
                 if high_cpu_processes[pid]['duration'] >= DURATION:
                     log(f"⚠️  Killing PID {pid} ({name}) CPU {cpu:.2f}% after {DURATION}s")
                     try:
-                        os.kill(pid, 9)
-                        log(f"✅ Killed PID {pid} ({name})")
+                        # Perbaikan: Cek apakah proses masih ada sebelum mengkill
+                        if psutil.pid_exists(pid):
+                            os.kill(pid, 9)
+                            log(f"✅ Killed PID {pid} ({name})")
+                        else:
+                            log(f"⚠️  Process {pid} no longer exists")
+                            
                         remove_malware_dir_if_exists()
                         success = send_whatsapp_message(
                             f"[CPU GUARD]\nProses {name} (PID {pid}) dihentikan karena CPU {cpu:.2f}% selama {DURATION} detik. Folder {MALWARE_DIR} juga telah dihapus."
                         )
                         if not success:
                             log("❌ Failed to send WhatsApp notification")
+                    except ProcessLookupError:
+                        log(f"⚠️  Process {pid} no longer exists")
+                    except PermissionError:
+                        log(f"❌ Permission denied to kill process {pid}")
                     except Exception as e:
                         log(f"❌ Failed to kill PID {pid}: {type(e).__name__}: {e}")
-                    del high_cpu_processes[pid]
+                    
+                    # Hapus dari tracking terlepas dari hasil kill
+                    if pid in high_cpu_processes:
+                        del high_cpu_processes[pid]
             else:
                 if pid in high_cpu_processes:
                     log(f"DEBUG: Removing process {pid} from tracking (CPU below threshold)")
                     del high_cpu_processes[pid]
 
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
     
     log(f"DEBUG: Cycle complete. Active processes: {active_processes}, Tracked processes: {len(high_cpu_processes)}")
