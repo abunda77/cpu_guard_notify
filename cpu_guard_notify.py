@@ -53,7 +53,7 @@ def send_whatsapp_message(message):
         log("❌ WhatsApp API URL not configured")
         return False
     
-    if not API_KEY and not USERNAME:
+    if not USERNAME or not PASSWORD:
         log("❌ WhatsApp API credentials not configured")
         return False
         
@@ -76,15 +76,12 @@ def send_whatsapp_message(message):
     log(f"DEBUG: Payload: {payload}")
     
     try:
-        # Perbaikan: Gunakan API_KEY jika tersedia, fallback ke USERNAME/PASSWORD untuk kompatibilitas
-        auth = None
-        if API_KEY:
-            headers = {"Authorization": f"Bearer {API_KEY}"}
-            auth = None
-        else:
-            headers = {}
-            auth = (USERNAME, PASSWORD)
-            
+        # Gunakan Basic Authentication dengan username dan password
+        headers = {"Content-Type": "application/json"}
+        auth = (USERNAME, PASSWORD)
+        
+        log(f"DEBUG: Using Basic authentication with username: {USERNAME}")
+        
         # Test koneksi dengan timeout
         response = requests.post(API_URL, json=payload, headers=headers, auth=auth, timeout=10)
         log(f"DEBUG: Response status: {response.status_code}")
@@ -144,8 +141,8 @@ def validate_configuration():
     if not API_URL:
         errors.append("API_URL tidak dikonfigurasi")
     
-    if not API_KEY and not USERNAME:
-        errors.append("API_KEY atau USERNAME tidak dikonfigurasi")
+    if not USERNAME or not PASSWORD:
+        errors.append("USERNAME atau PASSWORD tidak dikonfigurasi")
     
     if not RECIPIENT_NUMBER:
         errors.append("RECIPIENT_NUMBER tidak dikonfigurasi")
